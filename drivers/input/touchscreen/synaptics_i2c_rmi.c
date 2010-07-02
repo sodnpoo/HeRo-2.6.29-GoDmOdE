@@ -45,192 +45,13 @@ struct synaptics_ts_data {
 	uint32_t flags;
 	int reported_finger_count;
 	int8_t sensitivity_adjust;
-	uint32_t dup_threshold;
 	int (*power)(int on);
 	struct early_suspend early_suspend;
-	uint8_t first_pressed;
-	uint8_t key_pressed;
 };
 
 #ifdef CONFIG_HAS_EARLYSUSPEND
 static void synaptics_ts_early_suspend(struct early_suspend *h);
 static void synaptics_ts_late_resume(struct early_suspend *h);
-#endif
-
-static const char SYNAPTICSNAME[]	= "Synaptics-touch";
-static uint32_t syn_panel_version;
-
-static ssize_t touch_vendor_show(struct device *dev,
-		struct device_attribute *attr, char *buf)
-{
-	ssize_t ret = 0;
-
-	sprintf(buf, "%s_%#x\n", SYNAPTICSNAME, syn_panel_version);
-	ret = strlen(buf) + 1;
-
-	return ret;
-}
-
-static DEVICE_ATTR(vendor, 0444, touch_vendor_show, NULL);
-
-static struct kobject *android_touch_kobj;
-
-static int touch_sysfs_init(void)
-{
-	int ret;
-
-	android_touch_kobj = kobject_create_and_add("android_touch", NULL);
-	if (android_touch_kobj == NULL) {
-		printk(KERN_ERR
-		       "touch_sysfs_init: subsystem_register failed\n");
-		ret = -ENOMEM;
-		goto err;
-	}
-
-	ret = sysfs_create_file(android_touch_kobj, &dev_attr_vendor.attr);
-	if (ret) {
-		printk(KERN_ERR
-		       "touch_sysfs_init: sysfs_create_group failed\n");
-		goto err4;
-	}
-
-	return 0;
-err4:
-	kobject_del(android_touch_kobj);
-err:
-	return ret;
-}
-
-#define ENABLE_IME_IMPROVEMENT
-
-#ifdef ENABLE_IME_IMPROVEMENT
-#define MULTI_FINGER_NUMBER 2
-
-static int ime_threshold;
-static int report_x[MULTI_FINGER_NUMBER];
-static int report_y[MULTI_FINGER_NUMBER];
-static int pixel_x;
-static int pixel_y;
-static int touch_hit;
-static int ime_work_area[4];
-static int ime_work_area_x1;
-static int ime_work_area_x2;
-static int ime_work_area_y1;
-static int ime_work_area_y2;
-static int display_width;
-static int display_height;
-static int touch_screen_margin_left;
-static int touch_screen_margin_right;
-static int touch_screen_margin_top;
-static int touch_screen_margin_bottom;
-
-static ssize_t ime_threshold_show(struct device *dev,
-				   struct device_attribute *attr, char *buf)
-{
-	return sprintf(buf, "%d\n", ime_threshold);
-}
-
-static ssize_t ime_threshold_store(struct device *dev,
-				    struct device_attribute *attr,
-				    const char *buf, size_t count)
-{
-	char *ptr_data = (char *)buf;
-	unsigned long val;
-
-	val = simple_strtoul(ptr_data, NULL, 10);
-
-	if (val >= 0 && val <= max(display_width, display_height))
-		ime_threshold = val;
-	else
-		ime_threshold = 0;
-	return count;
-}
-
-static ssize_t ime_work_area_show(struct device *dev,
-				   struct device_attribute *attr, char *buf)
-{
-	return sprintf(buf, "%d,%d,%d,%d\n", ime_work_area[0],
-			ime_work_area[1], ime_work_area[2], ime_work_area[3]);
-}
-
-static ssize_t ime_work_area_store(struct device *dev,
-				    struct device_attribute *attr,
-				    const char *buf, size_t count)
-{
-	char *ptr_data = (char *)buf;
-	char *p;
-	int pt_count = 0;
-	unsigned long val[4];
-
-	while ((p = strsep(&ptr_data, ","))) {
-		if (!*p)
-			break;
-
-		if (pt_count >= 4)
-			break;
-
-		// if(strict_strtoul(p, 10, val[pt_count])) return count;
-		val[pt_count] = simple_strtoul(p, NULL, 10);
-
-		pt_count++;
-	}
-
-	if (pt_count >= 4 && display_width && display_height) {
-		ime_work_area[0] = val[0];
-		ime_work_area[1] = val[1];
-		ime_work_area[2] = val[2];
-		ime_work_area[3] = val[3];
-
-		if (val[0] <= 1)
-			ime_work_area_x1 = touch_screen_margin_left;
-		else
-			ime_work_area_x1 = touch_screen_margin_left +
-				(val[0] * (touch_screen_margin_right -
-				touch_screen_margin_left) / display_width);
-
-		if (val[1] >= display_width - 1)
-			ime_work_area_x2 = touch_screen_margin_right;
-		else
-			ime_work_area_x2 = touch_screen_margin_left +
-				(val[1] * (touch_screen_margin_right -
-				touch_screen_margin_left) / display_width);
-
-		if (val[2] <= 1)
-			ime_work_area_y1 = touch_screen_margin_top;
-		else
-			ime_work_area_y1 = touch_screen_margin_top +
-				(val[2] * (touch_screen_margin_bottom -
-				touch_screen_margin_top) / display_height);
-
-		if (val[3] >= display_height - 1)
-			ime_work_area_y2 = touch_screen_margin_bottom;
-		else
-			ime_work_area_y2 = touch_screen_margin_top +
-				(val[3] * (touch_screen_margin_bottom -
-				touch_screen_margin_top) / display_height);
-	}
-
-	return count;
-}
-
-static void clear_queue(void)
-{
-	/* Clear report point coordinate */
-	int i;
-
-	for (i = 0; i < MULTI_FINGER_NUMBER; i++) {
-		report_x[i] = 0;
-		report_y[i] = 0;
-	}
-
-	touch_hit = 0;
-}
-
-/* sys/class/input/input1/ime_threshold */
-static DEVICE_ATTR(ime_threshold, 0666, ime_threshold_show,
-		ime_threshold_store);
-static DEVICE_ATTR(ime_work_area, 0666, ime_work_area_show,
-		ime_work_area_store);
 #endif
 
 static int synaptics_init_panel(struct synaptics_ts_data *ts)
@@ -261,7 +82,6 @@ err_page_select_failed:
 	return ret;
 }
 
-
 static void synaptics_ts_work_func(struct work_struct *work)
 {
 	int i;
@@ -291,11 +111,11 @@ static void synaptics_ts_work_func(struct work_struct *work)
 			bad_data = 1;
 		} else {
 			/* printk("synaptics_ts_work_func: %x %x %x %x %x %x" */
-			/*	" %x %x %x %x %x %x %x %x %x, ret %d\n", */
-			/*	buf[0], buf[1], buf[2], buf[3], */
-			/*	buf[4], buf[5], buf[6], buf[7], */
-			/*	buf[8], buf[9], buf[10], buf[11], */
-			/*	buf[12], buf[13], buf[14], ret); */
+			/*        " %x %x %x %x %x %x %x %x %x, ret %d\n", */
+			/*        buf[0], buf[1], buf[2], buf[3], */
+			/*        buf[4], buf[5], buf[6], buf[7], */
+			/*        buf[8], buf[9], buf[10], buf[11], */
+			/*        buf[12], buf[13], buf[14], ret); */
 			if ((buf[buf_len - 1] & 0xc0) != 0x40) {
 				printk(KERN_WARNING "synaptics_ts_work_func:"
 				       " bad read %x %x %x %x %x %x %x %x %x"
@@ -372,7 +192,6 @@ static void synaptics_ts_work_func(struct work_struct *work)
 					if (ts->flags & SYNAPTICS_SWAP_XY)
 						swap(pos[f][0], pos[f][1]);
 				}
-#ifdef CONFIG_TOUCHSCREEN_COMPATIBLE_REPORT
 				if (z) {
 					input_report_abs(ts->input_dev, ABS_X, pos[0][0]);
 					input_report_abs(ts->input_dev, ABS_Y, pos[0][1]);
@@ -386,103 +205,9 @@ static void synaptics_ts_work_func(struct work_struct *work)
 					input_report_abs(ts->input_dev, ABS_HAT0X, pos[1][0]);
 					input_report_abs(ts->input_dev, ABS_HAT0Y, pos[1][1]);
 				}
-#else
-				finger2_pressed = finger > 1 && finger != 7;
-#endif
-				if (!finger) {
-					if (ts->key_pressed) {
-						ts->key_pressed = 0;
-						if (!ts->first_pressed) {
-							ts->first_pressed = 1;
-							printk(KERN_INFO "E@%d, %d\n",
-								pos[0][0], pos[0][1]);
-						}
-					}
+
+				if (!finger)
 					z = 0;
-				}
-
-#ifdef ENABLE_IME_IMPROVEMENT
-				if (ime_threshold > 0) {
-					int point_moved = 0; /* for ENABLE_IME_IMPROVEMENT */
-					int ime_multi_touch = 0;
-					int dx = 0;
-					int dy = 0;
-
-					if (finger2_pressed) {
-						ime_multi_touch = 1;
-					} else if ((pos[0][0] >= ime_work_area_x1 && pos[0][0] <= ime_work_area_x2) &&
-						(pos[0][1] >= ime_work_area_y1 && pos[0][1] <= ime_work_area_y2)) {
-						dx = abs(pos[0][0] - report_x[0]);
-						dy = abs(pos[0][1] - report_y[0]);
-
-						if ((dx > pixel_x * ime_threshold) || (dy > pixel_y * ime_threshold)) {
-							report_x[0] = pos[0][0];
-							report_y[0] = pos[0][1];
-							point_moved = 1;
-						}
-						if (z == 0) {
-							clear_queue();
-							point_moved = 1;
-						}
-					} else { /* Not in IME work area */
-						point_moved = 1;
-					}
-
-					if (!point_moved || ime_multi_touch)
-						break;
-				}
-#endif
-
-#ifdef CONFIG_TOUCHSCREEN_CONCATENATE_REPORT
-				/**
-				 * We concatenate z, w, x, y info to reduce the number of reports in event hub
-				 */
-#ifdef CONFIG_TOUCHSCREEN_DUPLICATED_FILTER
-				/**
-				 * Small movement report would seem as duplicated report, discard it
-				 */
-				int drift_x[2];
-				int drift_y[2];
-				uint8_t discard[2] = {0, 0};
-				static int ref_x[2], ref_y[2];
-
-				drift_x[0] = abs(ref_x[0] - pos[0][0]);
-				drift_y[0] = abs(ref_y[0] - pos[0][1]);
-				if (finger2_pressed) {
-					drift_x[1] = abs(ref_x[1] - pos[1][0]);
-					drift_y[1] = abs(ref_y[1] - pos[1][1]);
-				}
-				/* printk("ref_x :%d, ref_y: %d, x: %d, y: %d\n", ref_x, ref_y, pos[0][0], pos[0][1]); */
-				if (drift_x[0] < ts->dup_threshold && drift_y[0] < ts->dup_threshold && z != 0) {
-					/* if drift position < threshold, it would seem as duplicated report event and discard */
-					/* printk("ref_x :%d, ref_y: %d, x: %d, y: %d\n", ref_x[0], ref_y[0], pos[0][0], pos[0][1]); */
-					discard[0] = 1;
-				}
-				if (!finger2_pressed || (drift_x[1] < ts->dup_threshold && drift_y[1] < ts->dup_threshold)) {
-					discard[1] = 1;
-				}
-				if (discard[0] && discard[1]) {
-					/* if finger 0 and finger 1's movement < threshold , discard it. */
-					break;
-				}
-				ref_x[0] = pos[0][0];
-				ref_y[0] = pos[0][1];
-				if (finger2_pressed) {
-					ref_x[1] = pos[1][0];
-					ref_y[1] = pos[1][1];
-				}
-				if (z == 0) {
-					ref_x[0] = ref_x[1] = 0;
-					ref_y[0] = ref_y[1] = 0;
-				}
-#endif
-				input_report_abs(ts->input_dev, ABS_MT_AMPLITUDE, z << 16 | w);
-				input_report_abs(ts->input_dev, ABS_MT_POSITION, (!finger2_pressed) << 31 | pos[0][0] << 16 | pos[0][1]);
-				if (finger2_pressed) {
-					input_report_abs(ts->input_dev, ABS_MT_AMPLITUDE, z << 16 | w);
-					input_report_abs(ts->input_dev, ABS_MT_POSITION, 1 << 31 | pos[1][0] << 16 | pos[1][1]);
-				}
-#else
 				input_report_abs(ts->input_dev, ABS_MT_TOUCH_MAJOR, z);
 				input_report_abs(ts->input_dev, ABS_MT_WIDTH_MAJOR, w);
 				input_report_abs(ts->input_dev, ABS_MT_POSITION_X, pos[0][0]);
@@ -501,13 +226,6 @@ static void synaptics_ts_work_func(struct work_struct *work)
 				}
 				ts->reported_finger_count = finger;
 				input_sync(ts->input_dev);
-#endif
-				if (!ts->key_pressed && finger) {
-					ts->key_pressed = 1;
-					if (!ts->first_pressed)
-						printk(KERN_INFO "S@%d, %d\n",
-							pos[0][0], pos[0][1]);
-				}
 			}
 		}
 	}
@@ -561,9 +279,6 @@ static int synaptics_ts_probe(
 	int snap_bottom_on;
 	int snap_bottom_off;
 	uint32_t panel_version;
-#ifdef ENABLE_IME_IMPROVEMENT
-	int i;
-#endif
 
 	if (!i2c_check_functionality(client->adapter, I2C_FUNC_I2C)) {
 		printk(KERN_ERR "synaptics_ts_probe: need I2C_FUNC_I2C\n");
@@ -647,11 +362,6 @@ static int synaptics_ts_probe(
 		fuzz_y = pdata->fuzz_y;
 		fuzz_p = pdata->fuzz_p;
 		fuzz_w = pdata->fuzz_w;
-		ts->dup_threshold = pdata->dup_threshold;
-#ifdef ENABLE_IME_IMPROVEMENT
-		display_width = pdata->display_width;
-		display_height = pdata->display_height;
-#endif
 	} else {
 		irqflags = 0;
 		inactive_area_left = 0;
@@ -670,10 +380,6 @@ static int synaptics_ts_probe(
 		fuzz_y = 0;
 		fuzz_p = 0;
 		fuzz_w = 0;
-#ifdef ENABLE_IME_IMPROVEMENT
-		display_width = 320;
-		display_height = 480;
-#endif
 	}
 
 	ret = i2c_smbus_read_byte_data(ts->client, 0xf0);
@@ -792,70 +498,22 @@ static int synaptics_ts_probe(
 	printk(KERN_INFO "synaptics_ts_probe: snap_x %d-%d %d-%d, snap_y %d-%d %d-%d\n",
 	       snap_left_on, snap_left_off, snap_right_on, snap_right_off,
 	       snap_top_on, snap_top_off, snap_bottom_on, snap_bottom_off);
-#ifdef CONFIG_TOUCHSCREEN_COMPATIBLE_REPORT
 	input_set_abs_params(ts->input_dev, ABS_X, -inactive_area_left, max_x + inactive_area_right, fuzz_x, 0);
 	input_set_abs_params(ts->input_dev, ABS_Y, -inactive_area_top, max_y + inactive_area_bottom, fuzz_y, 0);
 	input_set_abs_params(ts->input_dev, ABS_PRESSURE, 0, 255, fuzz_p, 0);
 	input_set_abs_params(ts->input_dev, ABS_TOOL_WIDTH, 0, 15, fuzz_w, 0);
 	input_set_abs_params(ts->input_dev, ABS_HAT0X, -inactive_area_left, max_x + inactive_area_right, fuzz_x, 0);
 	input_set_abs_params(ts->input_dev, ABS_HAT0Y, -inactive_area_top, max_y + inactive_area_bottom, fuzz_y, 0);
-#endif
 	input_set_abs_params(ts->input_dev, ABS_MT_POSITION_X, -inactive_area_left, max_x + inactive_area_right, fuzz_x, 0);
 	input_set_abs_params(ts->input_dev, ABS_MT_POSITION_Y, -inactive_area_top, max_y + inactive_area_bottom, fuzz_y, 0);
 	input_set_abs_params(ts->input_dev, ABS_MT_TOUCH_MAJOR, 0, 255, fuzz_p, 0);
 	input_set_abs_params(ts->input_dev, ABS_MT_WIDTH_MAJOR, 0, 15, fuzz_w, 0);
-#ifdef CONFIG_TOUCHSCREEN_CONCATENATE_REPORT
-	input_set_abs_params(ts->input_dev, ABS_MT_AMPLITUDE, 0, ((255 << 16) | 255), 0, 0);
-	input_set_abs_params(ts->input_dev, ABS_MT_POSITION, 0, ((1 << 31) | (max_x << 16) | max_y), 0, 0);
-#endif
 	/* ts->input_dev->name = ts->keypad_info->name; */
 	ret = input_register_device(ts->input_dev);
 	if (ret) {
 		printk(KERN_ERR "synaptics_ts_probe: Unable to register %s input device\n", ts->input_dev->name);
 		goto err_input_register_device_failed;
 	}
-
-#ifdef ENABLE_IME_IMPROVEMENT
-	touch_screen_margin_left = -inactive_area_left;
-	touch_screen_margin_top = -inactive_area_top;
-	touch_screen_margin_right = max_x + inactive_area_right;
-	touch_screen_margin_bottom = max_y + inactive_area_bottom;
-
-	ret = device_create_file(&ts->input_dev->dev, &dev_attr_ime_threshold);
-	if (ret) {
-		printk(KERN_ERR "ENABLE_IME_IMPROVEMENT: "
-				"Error to create ime_threshold\n");
-		goto err_input_register_device_failed;
-	}
-	ret = device_create_file(&ts->input_dev->dev, &dev_attr_ime_work_area);
-	if (ret) {
-		printk(KERN_ERR "ENABLE_IME_IMPROVEMENT: "
-				"Error to create ime_work_area\n");
-		device_remove_file(&ts->input_dev->dev,
-				   &dev_attr_ime_threshold);
-		goto err_input_register_device_failed;
-	}
-
-	if (display_width)
-		pixel_x = (touch_screen_margin_right - touch_screen_margin_left)
-			  / display_width;
-	if (display_height)
-		pixel_y = (touch_screen_margin_bottom - touch_screen_margin_top)
-			  / display_height;
-
-	ime_threshold = 0;
-	for (i = 0; i < MULTI_FINGER_NUMBER; i++) {
-		report_x[i] = 0;
-		report_y[i] = 0;
-	}
-	touch_hit = 0;
-	printk(KERN_INFO "ENABLE_IME_IMPROVEMENT: x pixel size %d, "
-			"y pixel size %d, margin %d, %d, %d, %d.\n",
-			pixel_x, pixel_y,
-			touch_screen_margin_left, touch_screen_margin_right,
-			touch_screen_margin_top, touch_screen_margin_bottom);
-#endif
-
 	if (client->irq) {
 		ret = request_irq(client->irq, synaptics_ts_irq_handler, irqflags, client->name, ts);
 		if (ret == 0) {
@@ -874,15 +532,13 @@ static int synaptics_ts_probe(
 		hrtimer_start(&ts->timer, ktime_set(1, 0), HRTIMER_MODE_REL);
 	}
 #ifdef CONFIG_HAS_EARLYSUSPEND
-	ts->early_suspend.level = EARLY_SUSPEND_LEVEL_STOP_DRAWING + 1;
+	ts->early_suspend.level = EARLY_SUSPEND_LEVEL_BLANK_SCREEN + 1;
 	ts->early_suspend.suspend = synaptics_ts_early_suspend;
 	ts->early_suspend.resume = synaptics_ts_late_resume;
 	register_early_suspend(&ts->early_suspend);
 #endif
 
 	printk(KERN_INFO "synaptics_ts_probe: Start touchscreen %s in %s mode\n", ts->input_dev->name, ts->use_irq ? "interrupt" : "polling");
-
-	touch_sysfs_init();
 
 	return 0;
 
@@ -907,12 +563,6 @@ static int synaptics_ts_remove(struct i2c_client *client)
 	else
 		hrtimer_cancel(&ts->timer);
 	input_unregister_device(ts->input_dev);
-
-#ifdef ENABLE_IME_IMPROVEMENT
-	device_remove_file(&ts->input_dev->dev, &dev_attr_ime_threshold);
-	device_remove_file(&ts->input_dev->dev, &dev_attr_ime_work_area);
-#endif
-
 	kfree(ts);
 	return 0;
 }
@@ -954,8 +604,6 @@ static int synaptics_ts_resume(struct i2c_client *client)
 		if (ret < 0)
 			printk(KERN_ERR "synaptics_ts_resume power on failed\n");
 	}
-
-	ts->first_pressed = 0;
 
 	synaptics_init_panel(ts);
 
